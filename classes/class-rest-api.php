@@ -171,6 +171,11 @@ class REST_API {
 						'items'             => [ 'type' => 'string' ],
 						'sanitize_callback' => [ $this, 'sanitize_string_array' ],
 					],
+					'avatar_size' => [
+						'required'          => false,
+						'type'              => 'integer',
+						'sanitize_callback' => 'absint',
+					],
 				],
 			]
 		);
@@ -603,10 +608,11 @@ class REST_API {
 	 * @return \WP_REST_Response|\WP_Error
 	 */
 	public function handle_get_profile( \WP_REST_Request $request ) {
-		$logger    = Logger::get_instance();
-		$user_id   = Auth::get_user_id_from_request( $request );
-		$meta_keys = $request->get_param( 'meta_keys' ) ?: [];
-		$user      = get_userdata( $user_id );
+		$logger      = Logger::get_instance();
+		$user_id     = Auth::get_user_id_from_request( $request );
+		$meta_keys   = $request->get_param( 'meta_keys' ) ?: [];
+		$avatar_size = $request->get_param( 'avatar_size' );
+		$user        = get_userdata( $user_id );
 
 		if ( ! $user ) {
 			$logger->warning( sprintf( 'Profile request for non-existent user ID: %d', $user_id ) );
@@ -618,8 +624,14 @@ class REST_API {
 			);
 		}
 
+		// Build args for user data.
+		$args = [ 'meta_keys' => $meta_keys ];
+		if ( $avatar_size ) {
+			$args['avatar_size'] = $avatar_size;
+		}
+
 		// Get user data with requested meta.
-		$user_data = Auth::get_user_data( $user_id, $meta_keys );
+		$user_data = Auth::get_user_data( $user_id, $args );
 
 		// Get memberships.
 		$membership_data = Membership_Manager::get_instance()->get_user_memberships( $user_id );

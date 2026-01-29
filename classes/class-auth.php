@@ -346,12 +346,22 @@ class Auth {
 	 *
 	 * @since 0.1.0
 	 *
-	 * @param int   $user_id   The user ID.
-	 * @param array $meta_keys Optional. Array of meta keys to include.
+	 * @param int   $user_id The user ID.
+	 * @param array $args {
+	 *     Optional. Arguments for user data retrieval.
+	 *
+	 *     @type array $meta_keys   Array of meta keys to include in response.
+	 *     @type int   $avatar_size Avatar size in pixels. Default 200.
+	 * }
 	 *
 	 * @return array|null User data array or null if user not found.
 	 */
-	public static function get_user_data( int $user_id, array $meta_keys = [] ): ?array {
+	public static function get_user_data( int $user_id, array $args = [] ): ?array {
+		$args = wp_parse_args( $args, [
+			'meta_keys'   => [],
+			'avatar_size' => 200,
+		] );
+
 		$user = get_userdata( $user_id );
 
 		if ( ! $user ) {
@@ -363,10 +373,11 @@ class Auth {
 			'email'        => $user->user_email,
 			'username'     => $user->user_login,
 			'display_name' => $user->display_name,
+			'avatar'       => get_avatar_url( $user_id, [ 'size' => $args['avatar_size'] ] ),
 		];
 
 		// Add requested meta values.
-		foreach ( $meta_keys as $key ) {
+		foreach ( $args['meta_keys'] as $key ) {
 			$data[ $key ] = get_user_meta( $user_id, $key, true ) ?: null;
 		}
 
