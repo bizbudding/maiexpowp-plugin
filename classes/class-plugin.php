@@ -182,6 +182,20 @@ class Plugin {
 			]
 		);
 
+		// Apple user ID meta (links Apple accounts to WordPress users).
+		register_meta(
+			'user',
+			Social_Auth::APPLE_USER_ID_META,
+			[
+				'type'              => 'string',
+				'description'       => __( 'Apple Sign In user identifier.', 'maiexpowp' ),
+				'single'            => true,
+				'sanitize_callback' => 'sanitize_text_field',
+				'auth_callback'     => '__return_false',
+				'show_in_rest'      => false,
+			]
+		);
+
 		/**
 		 * Filter the user meta keys to register.
 		 *

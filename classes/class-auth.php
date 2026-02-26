@@ -98,6 +98,81 @@ class Auth {
 	const TOKEN_EXPIRY_DAYS = 30;
 
 	/**
+	 * Validate an auth token format string.
+	 *
+	 * Format: {user_id}.{selector}.{validator}
+	 * - user_id: numeric
+	 * - selector: 16 hex chars
+	 * - validator: 64 hex chars
+	 *
+	 * @since 0.1.0
+	 *
+	 * @param mixed $value The value to validate.
+	 *
+	 * @return bool True if valid auth token format.
+	 */
+	public static function validate_token_format( $value ): bool {
+		return is_string( $value ) && (bool) preg_match( '/^\d+\.[a-f0-9]{16}\.[a-f0-9]{64}$/', $value );
+	}
+
+	/**
+	 * Validate a JWT format string.
+	 *
+	 * Three base64url-encoded segments separated by dots.
+	 * Used for Apple Sign In identity tokens and any other JWT verification.
+	 *
+	 * @since 0.1.0
+	 *
+	 * @param mixed $value The value to validate.
+	 *
+	 * @return bool True if valid JWT format.
+	 */
+	public static function validate_jwt_format( $value ): bool {
+		return is_string( $value ) && (bool) preg_match( '/^[A-Za-z0-9_-]+\.[A-Za-z0-9_-]+\.[A-Za-z0-9_-]+$/', $value );
+	}
+
+	/**
+	 * Sanitize an auth token string.
+	 *
+	 * Trims whitespace. The token is only cryptographically verified,
+	 * never stored or rendered, so no further transformation is needed.
+	 *
+	 * @since 0.1.0
+	 *
+	 * @param mixed $value The value to sanitize.
+	 *
+	 * @return string Trimmed token.
+	 */
+	public static function sanitize_token( $value ): string {
+		return is_string( $value ) ? trim( $value ) : '';
+	}
+
+	/**
+	 * Generate a unique username from an email address.
+	 *
+	 * Takes the local part of the email, sanitizes it, and appends
+	 * a numeric suffix if the username is already taken.
+	 *
+	 * @since 0.1.0
+	 *
+	 * @param string $email The email address.
+	 *
+	 * @return string A unique username.
+	 */
+	public static function generate_username_from_email( string $email ): string {
+		$username = sanitize_user( current( explode( '@', $email ) ), true );
+		$original = $username;
+		$counter  = 1;
+
+		while ( username_exists( $username ) ) {
+			$username = $original . $counter;
+			$counter++;
+		}
+
+		return $username;
+	}
+
+	/**
 	 * Generate an auth token for a user.
 	 *
 	 * @since 0.1.0
@@ -152,18 +227,12 @@ class Auth {
 	public static function verify_token( string $token ) {
 		$logger = Logger::get_instance();
 
-		if ( empty( $token ) ) {
-			return false;
-		}
-
-		$parts = explode( '.', $token, 3 );
-
-		if ( count( $parts ) !== 3 ) {
+		if ( ! self::validate_token_format( $token ) ) {
 			$logger->warning( 'Token verification failed: invalid token format' );
 			return false;
 		}
 
-		[ $user_id, $selector, $validator ] = $parts;
+		[ $user_id, $selector, $validator ] = explode( '.', $token, 3 );
 		$user_id = absint( $user_id );
 
 		if ( ! $user_id ) {
@@ -211,13 +280,11 @@ class Auth {
 	 * @return void
 	 */
 	public static function invalidate_token( int $user_id, string $token ): void {
-		$parts = explode( '.', $token, 3 );
-
-		if ( count( $parts ) !== 3 ) {
+		if ( ! self::validate_token_format( $token ) ) {
 			return;
 		}
 
-		$selector = $parts[1];
+		$selector = explode( '.', $token, 3 )[1];
 		$tokens   = get_user_meta( $user_id, self::TOKEN_META_KEY, true );
 
 		if ( is_array( $tokens ) && isset( $tokens[ $selector ] ) ) {

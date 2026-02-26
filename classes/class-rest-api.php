@@ -293,6 +293,36 @@ class REST_API {
 			]
 		);
 
+		// POST /social-login/apple - Apple Sign In.
+		register_rest_route(
+			self::NAMESPACE,
+			'/social-login/apple',
+			[
+				'methods'             => 'POST',
+				'callback'            => [ $this, 'handle_apple_login' ],
+				'permission_callback' => '__return_true',
+				'args'                => [
+					'identity_token' => [
+						'required'          => true,
+						'type'              => 'string',
+						'sanitize_callback' => [ Auth::class, 'sanitize_token' ],
+						'validate_callback' => [ Auth::class, 'validate_jwt_format' ],
+					],
+					'user_info' => [
+						'required'             => false,
+						'type'                 => 'object',
+						'additionalProperties' => true,
+					],
+					'device_name' => [
+						'required'          => false,
+						'type'              => 'string',
+						'sanitize_callback' => 'sanitize_text_field',
+						'default'           => '',
+					],
+				],
+			]
+		);
+
 		// POST /auto-login-token - Generate one-time auto-login token.
 		register_rest_route(
 			self::NAMESPACE,
@@ -407,14 +437,7 @@ class REST_API {
 		}
 
 		// Generate username from email.
-		$username = sanitize_user( current( explode( '@', $email ) ), true );
-		$original = $username;
-		$counter  = 1;
-
-		while ( username_exists( $username ) ) {
-			$username = $original . $counter;
-			$counter++;
-		}
+		$username = Auth::generate_username_from_email( $email );
 
 		// Create the user.
 		$user_id = wp_create_user( $username, $password, $email );
@@ -524,6 +547,59 @@ class REST_API {
 				$user_data
 			),
 			200
+		);
+	}
+
+	/**
+	 * Handle Apple Sign In login.
+	 *
+	 * Verifies the Apple identity token, finds or creates a user,
+	 * generates an auth token, and returns the standard auth response.
+	 *
+	 * @since 0.1.0
+	 *
+	 * @param \WP_REST_Request $request The request object.
+	 *
+	 * @return \WP_REST_Response|\WP_Error
+	 */
+	public function handle_apple_login( \WP_REST_Request $request ) {
+		$logger         = Logger::get_instance();
+		$identity_token = $request->get_param( 'identity_token' );
+		$user_info      = $request->get_param( 'user_info' ) ?: [];
+		$device_name    = $request->get_param( 'device_name' );
+		$social_auth    = Social_Auth::get_instance();
+
+		// Verify the Apple identity token.
+		$apple_payload = $social_auth->verify_apple_identity_token( $identity_token );
+
+		if ( is_wp_error( $apple_payload ) ) {
+			return $apple_payload;
+		}
+
+		// Find or create user.
+		$result = $social_auth->find_or_create_user( $apple_payload, $user_info );
+
+		if ( is_wp_error( $result ) ) {
+			return $result;
+		}
+
+		$user_id = $result['user_id'];
+		$is_new  = $result['is_new'];
+
+		// Generate auth token.
+		$token = Auth::generate_token( $user_id, $device_name );
+
+		// Get user data.
+		$user_data = Auth::get_user_data( $user_id );
+
+		$status_code = $is_new ? 201 : 200;
+
+		return new \WP_REST_Response(
+			array_merge(
+				[ 'success' => true, 'token' => $token, 'is_new_user' => $is_new ],
+				$user_data
+			),
+			$status_code
 		);
 	}
 

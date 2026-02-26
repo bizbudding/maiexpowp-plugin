@@ -24,6 +24,7 @@ define( 'MAIEXPOWP_URL', plugin_dir_url( __FILE__ ) );
 require_once MAIEXPOWP_DIR . 'classes/class-logger.php';
 require_once MAIEXPOWP_DIR . 'classes/class-plugin.php';
 require_once MAIEXPOWP_DIR . 'classes/class-auth.php';
+require_once MAIEXPOWP_DIR . 'classes/class-social-auth.php';
 require_once MAIEXPOWP_DIR . 'classes/class-rest-api.php';
 require_once MAIEXPOWP_DIR . 'classes/class-membership-provider.php';
 require_once MAIEXPOWP_DIR . 'classes/class-membership-manager.php';
