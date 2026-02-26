@@ -339,6 +339,53 @@ class REST_API {
 				],
 			]
 		);
+
+		// POST /user/password-reset-request - Request password reset email.
+		register_rest_route(
+			self::NAMESPACE,
+			'/user/password-reset-request',
+			[
+				'methods'             => 'POST',
+				'callback'            => [ $this, 'handle_password_reset_request' ],
+				'permission_callback' => '__return_true',
+				'args'                => [
+					'email' => [
+						'required'          => true,
+						'type'              => 'string',
+						'format'            => 'email',
+						'sanitize_callback' => 'sanitize_email',
+					],
+				],
+			]
+		);
+
+		// POST /user/password-reset - Reset password with key.
+		register_rest_route(
+			self::NAMESPACE,
+			'/user/password-reset',
+			[
+				'methods'             => 'POST',
+				'callback'            => [ $this, 'handle_password_reset' ],
+				'permission_callback' => '__return_true',
+				'args'                => [
+					'email' => [
+						'required'          => true,
+						'type'              => 'string',
+						'format'            => 'email',
+						'sanitize_callback' => 'sanitize_email',
+					],
+					'key' => [
+						'required'          => true,
+						'type'              => 'string',
+						'sanitize_callback' => 'sanitize_text_field',
+					],
+					'password' => [
+						'required' => true,
+						'type'     => 'string',
+					],
+				],
+			]
+		);
 	}
 
 	/**
@@ -999,6 +1046,155 @@ class REST_API {
 			[
 				'success' => true,
 				'url'     => $autologin_url,
+			],
+			200
+		);
+	}
+
+	/**
+	 * Handle password reset request.
+	 *
+	 * Sends a password reset email. Always returns success to prevent
+	 * email enumeration attacks.
+	 *
+	 * @since 0.2.0
+	 *
+	 * @param \WP_REST_Request $request The request object.
+	 *
+	 * @return \WP_REST_Response
+	 */
+	public function handle_password_reset_request( \WP_REST_Request $request ) {
+		$logger = Logger::get_instance();
+		$email  = $request->get_param( 'email' );
+		$user   = get_user_by( 'email', $email );
+
+		// Always return success to prevent email enumeration.
+		$success_response = new \WP_REST_Response(
+			[
+				'success' => true,
+				'message' => __( 'If an account exists with this email, a password reset link has been sent.', 'maiexpowp' ),
+			],
+			200
+		);
+
+		if ( ! $user ) {
+			$logger->info( sprintf( 'Password reset requested for non-existent email: %s', $email ) );
+			return $success_response;
+		}
+
+		// Generate reset key.
+		$key = get_password_reset_key( $user );
+
+		if ( is_wp_error( $key ) ) {
+			$logger->error( sprintf( 'Failed to generate password reset key for user ID %d: %s', $user->ID, $key->get_error_message() ) );
+			return $success_response;
+		}
+
+		/**
+		 * Filter the password reset URL included in the email.
+		 *
+		 * Apps can use this to generate a deep link instead of the default
+		 * WordPress reset URL.
+		 *
+		 * @since 0.2.0
+		 *
+		 * @param string   $url   The default reset URL.
+		 * @param \WP_User $user  The user requesting the reset.
+		 * @param string   $key   The reset key.
+		 */
+		$reset_url = apply_filters(
+			'maiexpowp_password_reset_url',
+			network_site_url( "wp-login.php?action=rp&key={$key}&login=" . rawurlencode( $user->user_login ), 'login' ),
+			$user,
+			$key
+		);
+
+		$site_name = wp_specialchars_decode( get_option( 'blogname' ), ENT_QUOTES );
+
+		$message = sprintf(
+			/* translators: 1: Site name, 2: Reset URL */
+			__( "Someone has requested a password reset for your %1\$s account.\n\nTo reset your password, visit the following address:\n\n%2\$s\n\nIf you did not request this, you can safely ignore this email.", 'maiexpowp' ),
+			$site_name,
+			$reset_url
+		);
+
+		/**
+		 * Filter the password reset email message.
+		 *
+		 * @since 0.2.0
+		 *
+		 * @param string   $message The email message.
+		 * @param \WP_User $user    The user requesting the reset.
+		 * @param string   $key     The reset key.
+		 * @param string   $url     The reset URL.
+		 */
+		$message = apply_filters( 'maiexpowp_password_reset_message', $message, $user, $key, $reset_url );
+
+		/* translators: %s: Site name */
+		$title = sprintf( __( '[%s] Password Reset', 'maiexpowp' ), $site_name );
+
+		$sent = wp_mail( $user->user_email, $title, $message );
+
+		if ( ! $sent ) {
+			$logger->error( sprintf( 'Failed to send password reset email to user ID %d', $user->ID ) );
+		}
+
+		return $success_response;
+	}
+
+	/**
+	 * Handle password reset with key.
+	 *
+	 * Validates the reset key and sets the new password. Invalidates all
+	 * existing API tokens to force re-login from all devices.
+	 *
+	 * @since 0.2.0
+	 *
+	 * @param \WP_REST_Request $request The request object.
+	 *
+	 * @return \WP_REST_Response|\WP_Error
+	 */
+	public function handle_password_reset( \WP_REST_Request $request ) {
+		$logger   = Logger::get_instance();
+		$email    = $request->get_param( 'email' );
+		$key      = $request->get_param( 'key' );
+		$password = $request->get_param( 'password' );
+
+		$user = get_user_by( 'email', $email );
+
+		if ( ! $user ) {
+			return new \WP_Error(
+				'maiexpowp_invalid_reset',
+				__( 'Invalid password reset request.', 'maiexpowp' ),
+				[ 'status' => 400 ]
+			);
+		}
+
+		// Validate the reset key.
+		$check = check_password_reset_key( $key, $user->user_login );
+
+		if ( is_wp_error( $check ) ) {
+			$logger->warning( sprintf( 'Invalid password reset key for user ID %d: %s', $user->ID, $check->get_error_message() ) );
+
+			return new \WP_Error(
+				'maiexpowp_invalid_reset_key',
+				__( 'Invalid or expired reset key.', 'maiexpowp' ),
+				[ 'status' => 400 ]
+			);
+		}
+
+		// Reset the password.
+		reset_password( $user, $password );
+
+		// Invalidate all API tokens (password changed = force re-login).
+		Auth::invalidate_all_tokens( $user->ID );
+
+		$logger->info( sprintf( 'Password reset completed for user ID %d, all API tokens invalidated', $user->ID ) );
+
+		return new \WP_REST_Response(
+			[
+				'success' => true,
+				'message' => __( 'Password has been reset. Please log in with your new password.', 'maiexpowp' ),
 			],
 			200
 		);
