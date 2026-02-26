@@ -814,14 +814,28 @@ class REST_API {
 	 * @return \WP_REST_Response
 	 */
 	public function handle_get_meta( \WP_REST_Request $request ) {
+		$logger  = Logger::get_instance();
 		$user_id = get_current_user_id();
 		$keys    = $request->get_param( 'keys' );
 
+		// Filter requested keys through the read allowlist.
+		$allowed_keys   = $this->get_allowed_meta_read_keys();
+		$filtered_keys  = array_intersect( array_map( 'sanitize_key', $keys ), $allowed_keys );
+
+		if ( empty( $filtered_keys ) ) {
+			$logger->warning( sprintf( 'No allowed meta read keys in request from user ID: %d. Requested keys: %s', $user_id, implode( ', ', $keys ) ) );
+
+			return new \WP_Error(
+				'maiexpowp_no_allowed_keys',
+				__( 'None of the requested meta keys are allowed.', 'maiexpowp' ),
+				[ 'status' => 400 ]
+			);
+		}
+
 		$meta = [];
 
-		foreach ( $keys as $key ) {
-			$sanitized_key      = sanitize_key( $key );
-			$meta[ $sanitized_key ] = get_user_meta( $user_id, $sanitized_key, true ) ?: null;
+		foreach ( $filtered_keys as $key ) {
+			$meta[ $key ] = get_user_meta( $user_id, $key, true ) ?: null;
 		}
 
 		return new \WP_REST_Response(
@@ -1079,6 +1093,32 @@ class REST_API {
 		}
 
 		return array_intersect_key( $meta, array_flip( $allowed_keys ) );
+	}
+
+	/**
+	 * Get allowed meta keys for reading.
+	 *
+	 * Defaults to the write allowlist, but can be extended via filter
+	 * to include read-only keys (e.g., keys set by webhooks).
+	 *
+	 * @since 0.2.0
+	 *
+	 * @return array Array of allowed meta key names for reading.
+	 */
+	private function get_allowed_meta_read_keys(): array {
+		$write_keys = apply_filters( 'maiexpowp_allowed_user_meta_keys', [] );
+
+		/**
+		 * Filter the allowed user meta keys for reading.
+		 *
+		 * Defaults to the write allowlist. Add keys here that should be
+		 * readable but not writable (e.g., keys managed by webhooks).
+		 *
+		 * @since 0.2.0
+		 *
+		 * @param array $allowed_keys Array of allowed meta key names for reading.
+		 */
+		return apply_filters( 'maiexpowp_allowed_user_meta_read_keys', $write_keys );
 	}
 
 	/**
