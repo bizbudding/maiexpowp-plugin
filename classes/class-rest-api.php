@@ -386,6 +386,23 @@ class REST_API {
 				],
 			]
 		);
+
+		// POST /user/delete-account - Soft account deletion (App Store requirement).
+		register_rest_route(
+			self::NAMESPACE,
+			'/user/delete-account',
+			[
+				'methods'             => 'POST',
+				'callback'            => [ $this, 'handle_delete_account' ],
+				'permission_callback' => [ Auth::class, 'permission_callback' ],
+				'args'                => [
+					'confirm' => [
+						'required' => true,
+						'type'     => 'boolean',
+					],
+				],
+			]
+		);
 	}
 
 	/**
@@ -1195,6 +1212,61 @@ class REST_API {
 			[
 				'success' => true,
 				'message' => __( 'Password has been reset. Please log in with your new password.', 'maiexpowp' ),
+			],
+			200
+		);
+	}
+
+	/**
+	 * Handle soft account deletion.
+	 *
+	 * Severs the app connection by invalidating all API tokens.
+	 * Does NOT delete the WordPress account — preserves website access,
+	 * WooCommerce memberships, and order history.
+	 *
+	 * Fires `maiexpowp_before_delete_account` so apps can clean up
+	 * app-specific data (taxonomy terms, meta, etc.) via mu-plugin.
+	 *
+	 * @since 0.2.0
+	 *
+	 * @param \WP_REST_Request $request The request object.
+	 *
+	 * @return \WP_REST_Response|\WP_Error
+	 */
+	public function handle_delete_account( \WP_REST_Request $request ) {
+		$logger  = Logger::get_instance();
+		$user_id = get_current_user_id();
+		$confirm = $request->get_param( 'confirm' );
+
+		if ( ! $confirm ) {
+			return new \WP_Error(
+				'maiexpowp_confirmation_required',
+				__( 'You must confirm account deletion by setting confirm to true.', 'maiexpowp' ),
+				[ 'status' => 400 ]
+			);
+		}
+
+		/**
+		 * Fires before an account is soft-deleted from the app.
+		 *
+		 * Use this to clean up app-specific data: remove taxonomy terms,
+		 * clear app meta, revoke app-specific access, etc.
+		 *
+		 * @since 0.2.0
+		 *
+		 * @param int $user_id The user ID being deleted from the app.
+		 */
+		do_action( 'maiexpowp_before_delete_account', $user_id );
+
+		// Invalidate all API tokens (user can no longer auth from app).
+		Auth::invalidate_all_tokens( $user_id );
+
+		$logger->info( sprintf( 'Account soft-deleted for user ID %d: all API tokens invalidated', $user_id ) );
+
+		return new \WP_REST_Response(
+			[
+				'success' => true,
+				'message' => __( 'Your app account has been deleted. Your website account remains active.', 'maiexpowp' ),
 			],
 			200
 		);
