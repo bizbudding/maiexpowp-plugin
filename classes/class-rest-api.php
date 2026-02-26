@@ -470,16 +470,10 @@ class REST_API {
 
 		// Set taxonomy terms if provided.
 		if ( ! empty( $terms ) && is_array( $terms ) ) {
-			$allowed_taxonomies = $this->get_allowed_taxonomies();
-
 			foreach ( $terms as $taxonomy => $term_values ) {
 				$taxonomy = sanitize_key( $taxonomy );
 
-				if ( ! in_array( $taxonomy, $allowed_taxonomies, true ) ) {
-					continue;
-				}
-
-				if ( ! taxonomy_exists( $taxonomy ) ) {
+				if ( is_wp_error( $this->validate_taxonomy( $taxonomy ) ) ) {
 					continue;
 				}
 
@@ -490,19 +484,7 @@ class REST_API {
 			}
 		}
 
-		// Generate auth token.
-		$token = Auth::generate_token( $user_id );
-
-		// Get user data.
-		$user_data = Auth::get_user_data( $user_id );
-
-		return new \WP_REST_Response(
-			array_merge(
-				[ 'success' => true, 'token' => $token ],
-				$user_data
-			),
-			201
-		);
+		return $this->auth_response( $user_id, '', 201 );
 	}
 
 	/**
@@ -533,19 +515,7 @@ class REST_API {
 			);
 		}
 
-		// Generate auth token with device name.
-		$token = Auth::generate_token( $user->ID, $device_name );
-
-		// Get user data.
-		$user_data = Auth::get_user_data( $user->ID );
-
-		return new \WP_REST_Response(
-			array_merge(
-				[ 'success' => true, 'token' => $token ],
-				$user_data
-			),
-			200
-		);
+		return $this->auth_response( $user->ID, $device_name );
 	}
 
 	/**
@@ -584,21 +554,7 @@ class REST_API {
 		$user_id = $result['user_id'];
 		$is_new  = $result['is_new'];
 
-		// Generate auth token.
-		$token = Auth::generate_token( $user_id, $device_name );
-
-		// Get user data.
-		$user_data = Auth::get_user_data( $user_id );
-
-		$status_code = $is_new ? 201 : 200;
-
-		return new \WP_REST_Response(
-			array_merge(
-				[ 'success' => true, 'token' => $token, 'is_new_user' => $is_new ],
-				$user_data
-			),
-			$status_code
-		);
+		return $this->auth_response( $user_id, $device_name, $is_new ? 201 : 200, [ 'is_new_user' => $is_new ] );
 	}
 
 	/**
@@ -863,28 +819,11 @@ class REST_API {
 		$terms    = $request->get_param( 'terms' );
 		$append   = $request->get_param( 'append' );
 
-		// Check if taxonomy is allowed.
-		$allowed_taxonomies = $this->get_allowed_taxonomies();
+		// Validate taxonomy is allowed and exists.
+		$valid = $this->validate_taxonomy( $taxonomy, $user_id );
 
-		if ( ! in_array( $taxonomy, $allowed_taxonomies, true ) ) {
-			$logger->warning( sprintf( 'Attempt to set terms on disallowed taxonomy "%s" by user ID: %d', $taxonomy, $user_id ) );
-
-			return new \WP_Error(
-				'maiexpowp_taxonomy_not_allowed',
-				__( 'This taxonomy is not allowed.', 'maiexpowp' ),
-				[ 'status' => 400 ]
-			);
-		}
-
-		// Check if taxonomy exists.
-		if ( ! taxonomy_exists( $taxonomy ) ) {
-			$logger->warning( sprintf( 'Attempt to set terms on non-existent taxonomy "%s" by user ID: %d', $taxonomy, $user_id ) );
-
-			return new \WP_Error(
-				'maiexpowp_taxonomy_not_found',
-				__( 'Taxonomy not found.', 'maiexpowp' ),
-				[ 'status' => 404 ]
-			);
+		if ( is_wp_error( $valid ) ) {
+			return $valid;
 		}
 
 		// Set terms.
@@ -923,30 +862,14 @@ class REST_API {
 	 * @return \WP_REST_Response|\WP_Error
 	 */
 	public function handle_get_terms( \WP_REST_Request $request ) {
-		$logger   = Logger::get_instance();
 		$user_id  = get_current_user_id();
 		$taxonomy = $request->get_param( 'taxonomy' );
 
-		// Check if taxonomy is allowed.
-		$allowed_taxonomies = $this->get_allowed_taxonomies();
+		// Validate taxonomy is allowed and exists.
+		$valid = $this->validate_taxonomy( $taxonomy, $user_id );
 
-		if ( ! in_array( $taxonomy, $allowed_taxonomies, true ) ) {
-			$logger->warning( sprintf( 'Attempt to read terms from disallowed taxonomy "%s" by user ID: %d', $taxonomy, $user_id ) );
-
-			return new \WP_Error(
-				'maiexpowp_taxonomy_not_allowed',
-				__( 'This taxonomy is not allowed.', 'maiexpowp' ),
-				[ 'status' => 400 ]
-			);
-		}
-
-		// Check if taxonomy exists.
-		if ( ! taxonomy_exists( $taxonomy ) ) {
-			return new \WP_Error(
-				'maiexpowp_taxonomy_not_found',
-				__( 'Taxonomy not found.', 'maiexpowp' ),
-				[ 'status' => 404 ]
-			);
+		if ( is_wp_error( $valid ) ) {
+			return $valid;
 		}
 
 		$terms = wp_get_object_terms( $user_id, $taxonomy, [ 'fields' => 'all' ] );
@@ -1151,5 +1074,69 @@ class REST_API {
 		 * @param array $taxonomies Array of allowed taxonomy names.
 		 */
 		return apply_filters( 'maiexpowp_allowed_user_taxonomies', [ 'user-group' ] );
+	}
+
+	/**
+	 * Build a standard auth response (token + user data).
+	 *
+	 * Used by login, register, and social login handlers.
+	 *
+	 * @since 0.2.0
+	 *
+	 * @param int    $user_id     The authenticated user ID.
+	 * @param string $device_name Optional. Device identifier for session management.
+	 * @param int    $status_code HTTP status code. Default 200.
+	 * @param array  $extra       Additional fields to merge into the response.
+	 *
+	 * @return \WP_REST_Response
+	 */
+	private function auth_response( int $user_id, string $device_name = '', int $status_code = 200, array $extra = [] ): \WP_REST_Response {
+		$token     = Auth::generate_token( $user_id, $device_name );
+		$user_data = Auth::get_user_data( $user_id );
+
+		return new \WP_REST_Response(
+			array_merge(
+				[ 'success' => true, 'token' => $token ],
+				$user_data,
+				$extra
+			),
+			$status_code
+		);
+	}
+
+	/**
+	 * Validate a taxonomy is allowed and exists.
+	 *
+	 * @since 0.2.0
+	 *
+	 * @param string $taxonomy The taxonomy name.
+	 * @param int    $user_id  Optional. User ID for log context.
+	 *
+	 * @return true|\WP_Error True if valid, WP_Error otherwise.
+	 */
+	private function validate_taxonomy( string $taxonomy, int $user_id = 0 ) {
+		$logger = Logger::get_instance();
+
+		if ( ! in_array( $taxonomy, $this->get_allowed_taxonomies(), true ) ) {
+			$logger->warning( sprintf( 'Disallowed taxonomy "%s" requested by user ID: %d', $taxonomy, $user_id ) );
+
+			return new \WP_Error(
+				'maiexpowp_taxonomy_not_allowed',
+				__( 'This taxonomy is not allowed.', 'maiexpowp' ),
+				[ 'status' => 400 ]
+			);
+		}
+
+		if ( ! taxonomy_exists( $taxonomy ) ) {
+			$logger->warning( sprintf( 'Non-existent taxonomy "%s" requested by user ID: %d', $taxonomy, $user_id ) );
+
+			return new \WP_Error(
+				'maiexpowp_taxonomy_not_found',
+				__( 'Taxonomy not found.', 'maiexpowp' ),
+				[ 'status' => 404 ]
+			);
+		}
+
+		return true;
 	}
 }
