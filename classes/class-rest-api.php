@@ -611,7 +611,7 @@ class REST_API {
 	 * @return \WP_REST_Response
 	 */
 	public function handle_logout( \WP_REST_Request $request ) {
-		$user_id = Auth::get_user_id_from_request( $request );
+		$user_id = get_current_user_id();
 		$token   = Auth::get_token_from_request( $request );
 
 		// Invalidate only the current token (single device logout).
@@ -636,7 +636,7 @@ class REST_API {
 	 * @return \WP_REST_Response
 	 */
 	public function handle_logout_all( \WP_REST_Request $request ) {
-		$user_id = Auth::get_user_id_from_request( $request );
+		$user_id = get_current_user_id();
 
 		// Invalidate all tokens for this user.
 		Auth::invalidate_all_tokens( $user_id );
@@ -660,7 +660,7 @@ class REST_API {
 	 * @return \WP_REST_Response
 	 */
 	public function handle_get_sessions( \WP_REST_Request $request ) {
-		$user_id  = Auth::get_user_id_from_request( $request );
+		$user_id  = get_current_user_id();
 		$sessions = Auth::get_sessions( $user_id );
 
 		return new \WP_REST_Response(
@@ -683,7 +683,7 @@ class REST_API {
 	 */
 	public function handle_get_profile( \WP_REST_Request $request ) {
 		$logger      = Logger::get_instance();
-		$user_id     = Auth::get_user_id_from_request( $request );
+		$user_id     = get_current_user_id();
 		$meta_keys   = $request->get_param( 'meta_keys' ) ?: [];
 		$avatar_size = $request->get_param( 'avatar_size' );
 		$user        = get_userdata( $user_id );
@@ -760,7 +760,7 @@ class REST_API {
 	 */
 	public function handle_update_meta( \WP_REST_Request $request ) {
 		$logger  = Logger::get_instance();
-		$user_id = Auth::get_user_id_from_request( $request );
+		$user_id = get_current_user_id();
 		$meta    = $request->get_param( 'meta' );
 
 		if ( ! is_array( $meta ) || empty( $meta ) ) {
@@ -814,7 +814,7 @@ class REST_API {
 	 * @return \WP_REST_Response
 	 */
 	public function handle_get_meta( \WP_REST_Request $request ) {
-		$user_id = Auth::get_user_id_from_request( $request );
+		$user_id = get_current_user_id();
 		$keys    = $request->get_param( 'keys' );
 
 		$meta = [];
@@ -844,7 +844,7 @@ class REST_API {
 	 */
 	public function handle_set_terms( \WP_REST_Request $request ) {
 		$logger   = Logger::get_instance();
-		$user_id  = Auth::get_user_id_from_request( $request );
+		$user_id  = get_current_user_id();
 		$taxonomy = $request->get_param( 'taxonomy' );
 		$terms    = $request->get_param( 'terms' );
 		$append   = $request->get_param( 'append' );
@@ -909,7 +909,7 @@ class REST_API {
 	 * @return \WP_REST_Response|\WP_Error
 	 */
 	public function handle_get_terms( \WP_REST_Request $request ) {
-		$user_id  = Auth::get_user_id_from_request( $request );
+		$user_id  = get_current_user_id();
 		$taxonomy = $request->get_param( 'taxonomy' );
 
 		// Check if taxonomy exists.
@@ -962,7 +962,7 @@ class REST_API {
 	 * @return \WP_REST_Response
 	 */
 	public function handle_get_memberships( \WP_REST_Request $request ) {
-		$user_id = Auth::get_user_id_from_request( $request );
+		$user_id = get_current_user_id();
 
 		$membership_data = Membership_Manager::get_instance()->get_user_memberships( $user_id );
 
@@ -1024,7 +1024,7 @@ class REST_API {
 	 * @return \WP_REST_Response
 	 */
 	public function handle_generate_autologin_token( \WP_REST_Request $request ) {
-		$user_id      = Auth::get_user_id_from_request( $request );
+		$user_id      = get_current_user_id();
 		$redirect_url = $request->get_param( 'redirect_url' );
 
 		// Generate a cryptographically secure random token.

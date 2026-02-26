@@ -383,7 +383,10 @@ class Auth {
 	}
 
 	/**
-	 * Permission callback that verifies auth token.
+	 * Permission callback for authenticated endpoints.
+	 *
+	 * Relies on the `determine_current_user` filter (authenticate_token)
+	 * which already verified the token and called wp_set_current_user().
 	 *
 	 * @since 0.1.0
 	 *
@@ -392,20 +395,18 @@ class Auth {
 	 * @return bool|\WP_Error True if valid, WP_Error otherwise.
 	 */
 	public static function permission_callback( \WP_REST_Request $request ) {
-		$user_id = self::get_user_id_from_request( $request );
-
-		if ( ! $user_id ) {
-			$logger = Logger::get_instance();
-			$logger->warning( sprintf( 'Permission denied: invalid token for route %s', $request->get_route() ) );
-
-			return new \WP_Error(
-				'maiexpowp_invalid_token',
-				__( 'Invalid or expired token.', 'maiexpowp' ),
-				[ 'status' => 401 ]
-			);
+		if ( get_current_user_id() > 0 ) {
+			return true;
 		}
 
-		return true;
+		$logger = Logger::get_instance();
+		$logger->warning( sprintf( 'Permission denied: invalid token for route %s', $request->get_route() ) );
+
+		return new \WP_Error(
+			'maiexpowp_invalid_token',
+			__( 'Invalid or expired token.', 'maiexpowp' ),
+			[ 'status' => 401 ]
+		);
 	}
 
 	/**
