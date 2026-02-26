@@ -109,9 +109,8 @@ class REST_API {
 						'sanitize_callback' => 'sanitize_text_field',
 					],
 					'password' => [
-						'required'          => true,
-						'type'              => 'string',
-						'sanitize_callback' => 'sanitize_text_field',
+						'required' => true,
+						'type'     => 'string',
 					],
 					'device_name' => [
 						'required'          => false,
@@ -358,10 +357,9 @@ class REST_API {
 				'sanitize_callback' => 'sanitize_email',
 			],
 			'password'     => [
-				'required'          => true,
-				'type'              => 'string',
-				'minLength'         => 8,
-				'sanitize_callback' => 'sanitize_text_field',
+				'required'  => true,
+				'type'      => 'string',
+				'minLength' => 8,
 			],
 			'display_name' => [
 				'required'          => true,
