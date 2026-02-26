@@ -923,8 +923,22 @@ class REST_API {
 	 * @return \WP_REST_Response|\WP_Error
 	 */
 	public function handle_get_terms( \WP_REST_Request $request ) {
+		$logger   = Logger::get_instance();
 		$user_id  = get_current_user_id();
 		$taxonomy = $request->get_param( 'taxonomy' );
+
+		// Check if taxonomy is allowed.
+		$allowed_taxonomies = $this->get_allowed_taxonomies();
+
+		if ( ! in_array( $taxonomy, $allowed_taxonomies, true ) ) {
+			$logger->warning( sprintf( 'Attempt to read terms from disallowed taxonomy "%s" by user ID: %d', $taxonomy, $user_id ) );
+
+			return new \WP_Error(
+				'maiexpowp_taxonomy_not_allowed',
+				__( 'This taxonomy is not allowed.', 'maiexpowp' ),
+				[ 'status' => 400 ]
+			);
+		}
 
 		// Check if taxonomy exists.
 		if ( ! taxonomy_exists( $taxonomy ) ) {
