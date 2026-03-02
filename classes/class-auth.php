@@ -437,11 +437,12 @@ class Auth {
 		}
 
 		$data = [
-			'user_id'      => $user_id,
-			'email'        => $user->user_email,
-			'username'     => $user->user_login,
-			'display_name' => $user->display_name,
-			'avatar'       => get_avatar_url( $user_id, [ 'size' => $args['avatar_size'] ] ),
+			'user_id'         => $user_id,
+			'email'           => $user->user_email,
+			'username'        => $user->user_login,
+			'display_name'    => $user->display_name,
+			'avatar'          => get_avatar_url( $user_id, [ 'size' => $args['avatar_size'] ] ),
+			'user_registered' => $user->user_registered,
 		];
 
 		// Add requested meta values.

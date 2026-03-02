@@ -3,7 +3,7 @@
  * Plugin Name:       MaiExpoWP
  * Plugin URI:        https://bizbudding.com
  * Description:       WordPress companion plugin for maiexpowp React Native library.
- * Version:           0.2.0
+ * Version:           0.2.1
  * Requires at least: 6.9
  * Requires PHP:      8.1
  * Text Domain:       maiexpowp
@@ -16,7 +16,7 @@
 defined( 'ABSPATH' ) || exit;
 
 // Plugin constants.
-define( 'MAIEXPOWP_VERSION', '0.2.0' );
+define( 'MAIEXPOWP_VERSION', '0.2.1' );
 define( 'MAIEXPOWP_DIR', plugin_dir_path( __FILE__ ) );
 define( 'MAIEXPOWP_URL', plugin_dir_url( __FILE__ ) );
 
