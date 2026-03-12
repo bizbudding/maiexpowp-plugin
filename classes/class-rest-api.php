@@ -155,13 +155,13 @@ class REST_API {
 			]
 		);
 
-		// GET /user/profile - Get user profile.
+		// GET /user - Get current user profile.
 		register_rest_route(
 			self::NAMESPACE,
-			'/user/profile',
+			'/user',
 			[
 				'methods'             => 'GET',
-				'callback'            => [ $this, 'handle_get_profile' ],
+				'callback'            => [ $this, 'handle_get_user' ],
 				'permission_callback' => [ Auth::class, 'permission_callback' ],
 				'args'                => [
 					'meta_keys' => [
@@ -179,38 +179,34 @@ class REST_API {
 			]
 		);
 
-		// POST /user/meta - Update user meta.
+		// POST /user - Update current user profile.
 		register_rest_route(
 			self::NAMESPACE,
-			'/user/meta',
+			'/user',
 			[
 				'methods'             => 'POST',
-				'callback'            => [ $this, 'handle_update_meta' ],
+				'callback'            => [ $this, 'handle_update_user' ],
 				'permission_callback' => [ Auth::class, 'permission_callback' ],
 				'args'                => [
-					'meta' => [
-						'required'          => true,
-						'type'              => 'object',
-						'additionalProperties' => true,
+					'display_name' => [
+						'required'          => false,
+						'type'              => 'string',
+						'sanitize_callback' => 'sanitize_text_field',
 					],
-				],
-			]
-		);
-
-		// GET /user/meta - Get user meta.
-		register_rest_route(
-			self::NAMESPACE,
-			'/user/meta',
-			[
-				'methods'             => 'GET',
-				'callback'            => [ $this, 'handle_get_meta' ],
-				'permission_callback' => [ Auth::class, 'permission_callback' ],
-				'args'                => [
-					'keys' => [
-						'required'          => true,
-						'type'              => 'array',
-						'items'             => [ 'type' => 'string' ],
-						'sanitize_callback' => [ $this, 'sanitize_string_array' ],
+					'first_name' => [
+						'required'          => false,
+						'type'              => 'string',
+						'sanitize_callback' => 'sanitize_text_field',
+					],
+					'last_name' => [
+						'required'          => false,
+						'type'              => 'string',
+						'sanitize_callback' => 'sanitize_text_field',
+					],
+					'meta' => [
+						'required'             => false,
+						'type'                 => 'object',
+						'additionalProperties' => true,
 					],
 				],
 			]
@@ -701,7 +697,7 @@ class REST_API {
 	 *
 	 * @return \WP_REST_Response|\WP_Error
 	 */
-	public function handle_get_profile( \WP_REST_Request $request ) {
+	public function handle_get_user( \WP_REST_Request $request ) {
 		$logger      = Logger::get_instance();
 		$user_id     = get_current_user_id();
 		$meta_keys   = $request->get_param( 'meta_keys' ) ?: [];
@@ -770,101 +766,57 @@ class REST_API {
 	}
 
 	/**
-	 * Handle update user meta.
+	 * Handle update current user profile.
 	 *
-	 * @since 0.1.0
+	 * Updates core user fields (display_name, first_name, last_name) and/or
+	 * meta fields via the existing allowlist, then returns the full profile.
+	 *
+	 * @since 2.0.0
 	 *
 	 * @param \WP_REST_Request $request The request object.
 	 *
 	 * @return \WP_REST_Response|\WP_Error
 	 */
-	public function handle_update_meta( \WP_REST_Request $request ) {
-		$logger  = Logger::get_instance();
+	public function handle_update_user( \WP_REST_Request $request ) {
 		$user_id = get_current_user_id();
-		$meta    = $request->get_param( 'meta' );
 
-		if ( ! is_array( $meta ) || empty( $meta ) ) {
-			$logger->warning( sprintf( 'Invalid meta update request from user ID: %d', $user_id ) );
-
-			return new \WP_Error(
-				'maiexpowp_invalid_meta',
-				__( 'Meta must be a non-empty object.', 'maiexpowp' ),
-				[ 'status' => 400 ]
-			);
+		// Update core user fields if provided.
+		$core_fields = [];
+		foreach ( [ 'display_name', 'first_name', 'last_name' ] as $field ) {
+			$value = $request->get_param( $field );
+			if ( null !== $value ) {
+				$core_fields[ $field ] = $value;
+			}
 		}
 
-		$allowed_meta = $this->get_allowed_meta_keys( $meta );
-
-		if ( empty( $allowed_meta ) ) {
-			$logger->warning( sprintf( 'No allowed meta keys in update request from user ID: %d. Requested keys: %s', $user_id, implode( ', ', array_keys( $meta ) ) ) );
-
-			return new \WP_Error(
-				'maiexpowp_no_allowed_keys',
-				__( 'None of the provided meta keys are allowed.', 'maiexpowp' ),
-				[ 'status' => 400 ]
-			);
+		if ( ! empty( $core_fields ) ) {
+			$core_fields['ID'] = $user_id;
+			$result = wp_update_user( $core_fields );
+			if ( is_wp_error( $result ) ) {
+				return $result;
+			}
 		}
 
-		$updated = [];
+		// Update meta if provided (reuse existing allowlist logic).
+		$meta = $request->get_param( 'meta' );
+		if ( ! empty( $meta ) && is_array( $meta ) ) {
+			$allowed_meta = $this->get_allowed_meta_keys( $meta );
 
-		foreach ( $allowed_meta as $key => $value ) {
-			$sanitized_key   = sanitize_key( $key );
-			$sanitized_value = sanitize_text_field( $value );
+			if ( empty( $allowed_meta ) && ! empty( $meta ) ) {
+				return new \WP_Error(
+					'maiexpowp_no_allowed_keys',
+					__( 'None of the provided meta keys are allowed.', 'maiexpowp' ),
+					[ 'status' => 400 ]
+				);
+			}
 
-			update_user_meta( $user_id, $sanitized_key, $sanitized_value );
-			$updated[ $sanitized_key ] = $sanitized_value;
+			foreach ( $allowed_meta as $key => $value ) {
+				update_user_meta( $user_id, sanitize_key( $key ), sanitize_text_field( $value ) );
+			}
 		}
 
-		return new \WP_REST_Response(
-			[
-				'success' => true,
-				'updated' => $updated,
-			],
-			200
-		);
-	}
-
-	/**
-	 * Handle get user meta.
-	 *
-	 * @since 0.1.0
-	 *
-	 * @param \WP_REST_Request $request The request object.
-	 *
-	 * @return \WP_REST_Response
-	 */
-	public function handle_get_meta( \WP_REST_Request $request ) {
-		$logger  = Logger::get_instance();
-		$user_id = get_current_user_id();
-		$keys    = $request->get_param( 'keys' );
-
-		// Filter requested keys through the read allowlist.
-		$allowed_keys   = $this->get_allowed_meta_read_keys();
-		$filtered_keys  = array_intersect( array_map( 'sanitize_key', $keys ), $allowed_keys );
-
-		if ( empty( $filtered_keys ) ) {
-			$logger->warning( sprintf( 'No allowed meta read keys in request from user ID: %d. Requested keys: %s', $user_id, implode( ', ', $keys ) ) );
-
-			return new \WP_Error(
-				'maiexpowp_no_allowed_keys',
-				__( 'None of the requested meta keys are allowed.', 'maiexpowp' ),
-				[ 'status' => 400 ]
-			);
-		}
-
-		$meta = [];
-
-		foreach ( $filtered_keys as $key ) {
-			$meta[ $key ] = get_user_meta( $user_id, $key, true ) ?: null;
-		}
-
-		return new \WP_REST_Response(
-			[
-				'user_id' => $user_id,
-				'meta'    => $meta,
-			],
-			200
-		);
+		// Return the full updated profile (reuse GET handler logic).
+		return $this->handle_get_user( $request );
 	}
 
 	/**

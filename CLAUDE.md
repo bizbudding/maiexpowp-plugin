@@ -50,23 +50,21 @@ Creates user, sets meta/terms, returns token.
 ### POST /social-login/apple
 Verifies Apple identity token, finds or creates user, returns token.
 
-### GET /user/profile
-Returns user profile with optional meta fields.
+### GET /user
+Returns current user profile with optional meta fields, memberships, terms.
 
 **Query Parameters:**
 - `meta_keys` - Array of meta keys to include. Accepts both formats:
   - `?meta_keys[]=key1&meta_keys[]=key2` (array notation)
   - `?meta_keys=key1,key2` (comma-separated)
+- `avatar_size` - Integer for Gravatar size
 
-### POST /user/meta
-Update user meta. Only keys in `maiexpowp_allowed_user_meta_keys` filter are accepted.
+### POST /user
+Update current user profile. Accepts core fields and/or meta.
 
-**Body:** `{ "meta": { "key": "value" } }`
-
-### GET /user/meta
-Read user meta. Only keys in `maiexpowp_allowed_user_meta_read_keys` filter are returned (defaults to the write allowlist).
-
-**Query Parameters:** `?keys[]=key1&keys[]=key2`
+**Body:** `{ "display_name": "...", "first_name": "...", "last_name": "...", "meta": { "key": "value" } }`
+All fields optional. Meta keys must be in `maiexpowp_allowed_user_meta_keys` filter.
+Returns the full updated profile (same shape as GET /user).
 
 ### POST /user/terms & GET /user/terms
 Set/get user taxonomy terms. Only taxonomies in `maiexpowp_allowed_user_taxonomies` filter are accepted for both reading and writing.
@@ -89,12 +87,6 @@ Authenticated endpoint. Soft-deletes app connection (invalidates all API tokens)
 ### POST /auto-login-token
 Generates a one-time, short-lived token for auto-logging into the website from the app.
 
-### WordPress Core Alternative
-User meta can also be updated via WordPress core:
-`POST /wp/v2/users/{id}` with `{ "meta": { "key": "value" } }`
-
-Requires `register_meta()` with `show_in_rest => true` for each meta key.
-
 ## Filters
 
 ### maiexpowp_allowed_user_meta_keys
@@ -107,7 +99,7 @@ add_filter('maiexpowp_allowed_user_meta_keys', function($keys) {
 ```
 
 ### maiexpowp_allowed_user_meta_read_keys
-Allowlist of meta keys that can be read via `GET /user/meta`. Defaults to the write allowlist. Use to expose read-only keys (e.g., keys set by webhooks).
+Allowlist of meta keys that can be read via `GET /user`. Defaults to the write allowlist. Use to expose read-only keys (e.g., keys set by webhooks).
 
 ```php
 add_filter('maiexpowp_allowed_user_meta_read_keys', function($keys) {
@@ -172,9 +164,6 @@ The `determine_current_user` filter must be registered to set up user context fr
 1. Check `meta_keys` parameter is being sent correctly
 2. Verify `sanitize_string_array` handles both string and array formats
 3. Ensure meta key is in `maiexpowp_allowed_user_meta_keys` filter
-
-### GET /user/meta returns "no allowed keys"
-The requested keys must be in the `maiexpowp_allowed_user_meta_read_keys` filter (defaults to the write allowlist).
 
 ### Token format
 `{user_id}.{selector}.{validator}` - The user_id prefix allows direct DB lookup without scanning all users.
