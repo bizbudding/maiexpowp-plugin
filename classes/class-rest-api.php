@@ -118,6 +118,11 @@ class REST_API {
 						'sanitize_callback' => 'sanitize_text_field',
 						'default'           => '',
 					],
+					'terms' => [
+						'required'             => false,
+						'type'                 => 'object',
+						'additionalProperties' => true,
+					],
 				],
 			]
 		);
@@ -313,6 +318,11 @@ class REST_API {
 						'type'              => 'string',
 						'sanitize_callback' => 'sanitize_text_field',
 						'default'           => '',
+					],
+					'terms' => [
+						'required'             => false,
+						'type'                 => 'object',
+						'additionalProperties' => true,
 					],
 				],
 			]
@@ -530,18 +540,7 @@ class REST_API {
 
 		// Set taxonomy terms if provided.
 		if ( ! empty( $terms ) && is_array( $terms ) ) {
-			foreach ( $terms as $taxonomy => $term_values ) {
-				$taxonomy = sanitize_key( $taxonomy );
-
-				if ( is_wp_error( $this->validate_taxonomy( $taxonomy ) ) ) {
-					continue;
-				}
-
-				$term_values = is_array( $term_values ) ? $term_values : [ $term_values ];
-				$term_values = array_map( 'sanitize_text_field', $term_values );
-
-				wp_set_object_terms( $user_id, $term_values, $taxonomy );
-			}
+			$this->process_user_terms( $user_id, $terms );
 		}
 
 		return $this->auth_response( $user_id, '', 201 );
@@ -561,6 +560,7 @@ class REST_API {
 		$username    = $request->get_param( 'username' );
 		$password    = $request->get_param( 'password' );
 		$device_name = $request->get_param( 'device_name' );
+		$terms       = $request->get_param( 'terms' ) ?: [];
 
 		// Authenticate user.
 		$user = wp_authenticate( $username, $password );
@@ -573,6 +573,11 @@ class REST_API {
 				__( 'Invalid username or password.', 'maiexpowp' ),
 				[ 'status' => 401 ]
 			);
+		}
+
+		// Set taxonomy terms if provided.
+		if ( ! empty( $terms ) && is_array( $terms ) ) {
+			$this->process_user_terms( $user->ID, $terms );
 		}
 
 		return $this->auth_response( $user->ID, $device_name );
@@ -595,6 +600,7 @@ class REST_API {
 		$identity_token = $request->get_param( 'identity_token' );
 		$user_info      = $request->get_param( 'user_info' ) ?: [];
 		$device_name    = $request->get_param( 'device_name' );
+		$terms          = $request->get_param( 'terms' ) ?: [];
 		$social_auth    = Social_Auth::get_instance();
 
 		// Verify the Apple identity token.
@@ -613,6 +619,11 @@ class REST_API {
 
 		$user_id = $result['user_id'];
 		$is_new  = $result['is_new'];
+
+		// Set taxonomy terms if provided.
+		if ( ! empty( $terms ) && is_array( $terms ) ) {
+			$this->process_user_terms( $user_id, $terms );
+		}
 
 		return $this->auth_response( $user_id, $device_name, $is_new ? 201 : 200, [ 'is_new_user' => $is_new ] );
 	}
@@ -1293,7 +1304,7 @@ class REST_API {
 		 *
 		 * @param array $taxonomies Array of allowed taxonomy names.
 		 */
-		return apply_filters( 'maiexpowp_allowed_user_taxonomies', [ 'user-group' ] );
+		return apply_filters( 'maiexpowp_allowed_user_taxonomies', [] );
 	}
 
 	/**
