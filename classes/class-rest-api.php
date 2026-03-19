@@ -1345,6 +1345,34 @@ class REST_API {
 	 *
 	 * @return true|\WP_Error True if valid, WP_Error otherwise.
 	 */
+	/**
+	 * Process taxonomy terms for a user.
+	 *
+	 * Idempotent - safe to call on every auth request.
+	 * Uses wp_set_object_terms which replaces terms for each taxonomy.
+	 *
+	 * @since 0.3.0
+	 *
+	 * @param int   $user_id The user ID.
+	 * @param array $terms   Associative array of taxonomy => term values.
+	 *
+	 * @return void
+	 */
+	private function process_user_terms( int $user_id, array $terms ): void {
+		foreach ( $terms as $taxonomy => $term_values ) {
+			$taxonomy = sanitize_key( $taxonomy );
+
+			if ( is_wp_error( $this->validate_taxonomy( $taxonomy, $user_id ) ) ) {
+				continue;
+			}
+
+			$term_values = is_array( $term_values ) ? $term_values : [ $term_values ];
+			$term_values = array_map( 'sanitize_text_field', $term_values );
+
+			wp_set_object_terms( $user_id, $term_values, $taxonomy );
+		}
+	}
+
 	private function validate_taxonomy( string $taxonomy, int $user_id = 0 ) {
 		$logger = Logger::get_instance();
 
