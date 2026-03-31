@@ -365,7 +365,7 @@ class REST_API {
 			]
 		);
 
-		// POST /user/password-reset - Reset password with key.
+		// POST /user/password-reset - Reset password with 6-digit code.
 		register_rest_route(
 			self::NAMESPACE,
 			'/user/password-reset',
@@ -380,12 +380,33 @@ class REST_API {
 						'format'            => 'email',
 						'sanitize_callback' => 'sanitize_email',
 					],
-					'key' => [
+					'code' => [
 						'required'          => true,
 						'type'              => 'string',
 						'sanitize_callback' => 'sanitize_text_field',
 					],
 					'password' => [
+						'required' => true,
+						'type'     => 'string',
+					],
+				],
+			]
+		);
+
+		// POST /user/change-password - Change password for authenticated user.
+		register_rest_route(
+			self::NAMESPACE,
+			'/user/change-password',
+			[
+				'methods'             => 'POST',
+				'callback'            => [ $this, 'handle_change_password' ],
+				'permission_callback' => [ Auth::class, 'permission_callback' ],
+				'args'                => [
+					'current_password' => [
+						'required' => true,
+						'type'     => 'string',
+					],
+					'new_password' => [
 						'required' => true,
 						'type'     => 'string',
 					],
@@ -1052,7 +1073,7 @@ class REST_API {
 		$success_response = new \WP_REST_Response(
 			[
 				'success' => true,
-				'message' => __( 'If an account exists with this email, a password reset link has been sent.', 'maiexpowp' ),
+				'message' => __( 'If an account exists with this email, a password reset code has been sent.', 'maiexpowp' ),
 			],
 			200
 		);
@@ -1062,53 +1083,34 @@ class REST_API {
 			return $success_response;
 		}
 
-		// Generate reset key.
-		$key = get_password_reset_key( $user );
+		// Generate 6-digit reset code.
+		$code = str_pad( random_int( 0, 999999 ), 6, '0', STR_PAD_LEFT );
 
-		if ( is_wp_error( $key ) ) {
-			$logger->error( sprintf( 'Failed to generate password reset key for user ID %d: %s', $user->ID, $key->get_error_message() ) );
-			return $success_response;
-		}
-
-		/**
-		 * Filter the password reset URL included in the email.
-		 *
-		 * Apps can use this to generate a deep link instead of the default
-		 * WordPress reset URL.
-		 *
-		 * @since 0.2.0
-		 *
-		 * @param string   $url   The default reset URL.
-		 * @param \WP_User $user  The user requesting the reset.
-		 * @param string   $key   The reset key.
-		 */
-		$reset_url = apply_filters(
-			'maiexpowp_password_reset_url',
-			network_site_url( "wp-login.php?action=rp&key={$key}&login=" . rawurlencode( $user->user_login ), 'login' ),
-			$user,
-			$key
-		);
+		// Store hashed code, expiry (15 minutes), and reset attempt counter.
+		update_user_meta( $user->ID, '_password_reset_code', wp_hash_password( $code ) );
+		update_user_meta( $user->ID, '_password_reset_code_expires', time() + 900 );
+		update_user_meta( $user->ID, '_password_reset_code_attempts', 0 );
 
 		$site_name = wp_specialchars_decode( get_option( 'blogname' ), ENT_QUOTES );
 
 		$message = sprintf(
-			/* translators: 1: Site name, 2: Reset URL */
-			__( "Someone has requested a password reset for your %1\$s account.\n\nTo reset your password, visit the following address:\n\n%2\$s\n\nIf you did not request this, you can safely ignore this email.", 'maiexpowp' ),
+			/* translators: 1: Site name, 2: Reset code */
+			__( "Someone has requested a password reset for your %1\$s account.\n\nYour password reset code is:\n\n%2\$s\n\nThis code expires in 15 minutes.\n\nIf you did not request this, you can safely ignore this email.", 'maiexpowp' ),
 			$site_name,
-			$reset_url
+			$code
 		);
 
 		/**
 		 * Filter the password reset email message.
 		 *
 		 * @since 0.2.0
+		 * @since 0.3.0 Changed from URL-based to 6-digit code. $code replaces $key, $url removed.
 		 *
 		 * @param string   $message The email message.
 		 * @param \WP_User $user    The user requesting the reset.
-		 * @param string   $key     The reset key.
-		 * @param string   $url     The reset URL.
+		 * @param string   $code    The 6-digit reset code (plain text, for inclusion in message).
 		 */
-		$message = apply_filters( 'maiexpowp_password_reset_message', $message, $user, $key, $reset_url );
+		$message = apply_filters( 'maiexpowp_password_reset_message', $message, $user, $code );
 
 		/* translators: %s: Site name */
 		$title = sprintf( __( '[%s] Password Reset', 'maiexpowp' ), $site_name );
@@ -1123,12 +1125,14 @@ class REST_API {
 	}
 
 	/**
-	 * Handle password reset with key.
+	 * Handle password reset with 6-digit code.
 	 *
-	 * Validates the reset key and sets the new password. Invalidates all
-	 * existing API tokens to force re-login from all devices.
+	 * Validates the code against the hashed value stored in user meta,
+	 * enforces a 3-attempt limit and 15-minute expiry, then sets the
+	 * new password and invalidates all API tokens.
 	 *
 	 * @since 0.2.0
+	 * @since 0.3.0 Changed from WP reset key to 6-digit hashed code with attempt limiting.
 	 *
 	 * @param \WP_REST_Request $request The request object.
 	 *
@@ -1137,7 +1141,7 @@ class REST_API {
 	public function handle_password_reset( \WP_REST_Request $request ) {
 		$logger   = Logger::get_instance();
 		$email    = $request->get_param( 'email' );
-		$key      = $request->get_param( 'key' );
+		$code     = $request->get_param( 'code' );
 		$password = $request->get_param( 'password' );
 
 		$user = get_user_by( 'email', $email );
@@ -1150,21 +1154,79 @@ class REST_API {
 			);
 		}
 
-		// Validate the reset key.
-		$check = check_password_reset_key( $key, $user->user_login );
+		$stored_hash = get_user_meta( $user->ID, '_password_reset_code', true );
+		$expires     = (int) get_user_meta( $user->ID, '_password_reset_code_expires', true );
+		$attempts    = (int) get_user_meta( $user->ID, '_password_reset_code_attempts', true );
 
-		if ( is_wp_error( $check ) ) {
-			$logger->warning( sprintf( 'Invalid password reset key for user ID %d: %s', $user->ID, $check->get_error_message() ) );
-
+		// Check if a code was ever requested.
+		if ( ! $stored_hash ) {
 			return new \WP_Error(
-				'maiexpowp_invalid_reset_key',
-				__( 'Invalid or expired reset key.', 'maiexpowp' ),
+				'maiexpowp_no_reset_code',
+				__( 'No password reset code has been requested.', 'maiexpowp' ),
 				[ 'status' => 400 ]
 			);
 		}
 
-		// Reset the password.
+		// Check expiry.
+		if ( time() > $expires ) {
+			// Clean up expired code.
+			delete_user_meta( $user->ID, '_password_reset_code' );
+			delete_user_meta( $user->ID, '_password_reset_code_expires' );
+			delete_user_meta( $user->ID, '_password_reset_code_attempts' );
+
+			return new \WP_Error(
+				'maiexpowp_reset_code_expired',
+				__( 'Reset code has expired. Please request a new one.', 'maiexpowp' ),
+				[ 'status' => 400 ]
+			);
+		}
+
+		// Check attempt limit (3 max).
+		if ( $attempts >= 3 ) {
+			// Invalidate the code after too many attempts.
+			delete_user_meta( $user->ID, '_password_reset_code' );
+			delete_user_meta( $user->ID, '_password_reset_code_expires' );
+			delete_user_meta( $user->ID, '_password_reset_code_attempts' );
+
+			$logger->warning( sprintf( 'Password reset code invalidated for user ID %d: too many attempts', $user->ID ) );
+
+			return new \WP_Error(
+				'maiexpowp_too_many_attempts',
+				__( 'Too many incorrect attempts. Please request a new code.', 'maiexpowp' ),
+				[ 'status' => 400 ]
+			);
+		}
+
+		// Validate the code.
+		if ( ! wp_check_password( $code, $stored_hash ) ) {
+			// Increment attempt counter.
+			update_user_meta( $user->ID, '_password_reset_code_attempts', $attempts + 1 );
+
+			$logger->warning( sprintf( 'Invalid password reset code for user ID %d (attempt %d of 3)', $user->ID, $attempts + 1 ) );
+
+			return new \WP_Error(
+				'maiexpowp_invalid_reset_code',
+				__( 'Invalid reset code.', 'maiexpowp' ),
+				[ 'status' => 400 ]
+			);
+		}
+
+		// Validate new password length.
+		if ( strlen( $password ) < 8 ) {
+			return new \WP_Error(
+				'maiexpowp_password_too_short',
+				__( 'New password must be at least 8 characters.', 'maiexpowp' ),
+				[ 'status' => 400 ]
+			);
+		}
+
+		// Code is valid — reset the password.
 		reset_password( $user, $password );
+
+		// Clean up reset code meta.
+		delete_user_meta( $user->ID, '_password_reset_code' );
+		delete_user_meta( $user->ID, '_password_reset_code_expires' );
+		delete_user_meta( $user->ID, '_password_reset_code_attempts' );
 
 		// Invalidate all API tokens (password changed = force re-login).
 		Auth::invalidate_all_tokens( $user->ID );
@@ -1175,6 +1237,73 @@ class REST_API {
 			[
 				'success' => true,
 				'message' => __( 'Password has been reset. Please log in with your new password.', 'maiexpowp' ),
+			],
+			200
+		);
+	}
+
+	/**
+	 * Handle password change for authenticated user.
+	 *
+	 * Validates the current password, sets the new one, invalidates all
+	 * existing tokens, and returns a fresh token for the current session.
+	 *
+	 * @since 0.3.0
+	 *
+	 * @param \WP_REST_Request $request The request object.
+	 *
+	 * @return \WP_REST_Response|\WP_Error
+	 */
+	public function handle_change_password( \WP_REST_Request $request ) {
+		$logger           = Logger::get_instance();
+		$user_id          = get_current_user_id();
+		$user             = get_userdata( $user_id );
+		$current_password = $request->get_param( 'current_password' );
+		$new_password     = $request->get_param( 'new_password' );
+
+		if ( ! $user ) {
+			return new \WP_Error(
+				'maiexpowp_user_not_found',
+				__( 'User not found.', 'maiexpowp' ),
+				[ 'status' => 404 ]
+			);
+		}
+
+		// Validate current password.
+		if ( ! wp_check_password( $current_password, $user->user_pass, $user_id ) ) {
+			return new \WP_Error(
+				'maiexpowp_invalid_password',
+				__( 'Current password is incorrect.', 'maiexpowp' ),
+				[ 'status' => 400 ]
+			);
+		}
+
+		// Validate new password length.
+		if ( strlen( $new_password ) < 8 ) {
+			return new \WP_Error(
+				'maiexpowp_password_too_short',
+				__( 'New password must be at least 8 characters.', 'maiexpowp' ),
+				[ 'status' => 400 ]
+			);
+		}
+
+		// Set new password.
+		wp_set_password( $new_password, $user_id );
+
+		// Invalidate all existing tokens.
+		Auth::invalidate_all_tokens( $user_id );
+
+		// Issue a fresh token for the current session.
+		$device_name = $request->get_header( 'X-Device-Name' ) ?: '';
+		$token       = Auth::generate_token( $user_id, $device_name );
+
+		$logger->info( sprintf( 'Password changed for user ID %d', $user_id ) );
+
+		return new \WP_REST_Response(
+			[
+				'success' => true,
+				'message' => __( 'Password changed successfully.', 'maiexpowp' ),
+				'token'   => $token,
 			],
 			200
 		);

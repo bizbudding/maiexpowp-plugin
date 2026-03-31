@@ -37,6 +37,13 @@ class Auth {
 	const TOKEN_META_KEY = 'maiexpowp_auth_tokens';
 
 	/**
+	 * Token expiry duration in days.
+	 *
+	 * @since 0.1.0
+	 */
+	const TOKEN_EXPIRY_DAYS = 30;
+
+	/**
 	 * Initialize auth hooks.
 	 *
 	 * @since 0.1.0
@@ -89,13 +96,6 @@ class Auth {
 
 		return $user_id;
 	}
-
-	/**
-	 * Token expiry duration in days.
-	 *
-	 * @since 0.1.0
-	 */
-	const TOKEN_EXPIRY_DAYS = 30;
 
 	/**
 	 * Validate an auth token format string.
@@ -441,6 +441,8 @@ class Auth {
 			'email'           => $user->user_email,
 			'username'        => $user->user_login,
 			'display_name'    => $user->display_name,
+			'first_name'      => $user->first_name,
+			'last_name'       => $user->last_name,
 			'avatar'          => get_avatar_url( $user_id, [ 'size' => $args['avatar_size'] ] ),
 			'user_registered' => $user->user_registered,
 		];
