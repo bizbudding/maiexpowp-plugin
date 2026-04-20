@@ -414,7 +414,9 @@ class REST_API {
 			]
 		);
 
-		// POST /user/delete-account - Soft account deletion (App Store requirement).
+		// POST /user/delete-account - Account deletion (App Store requirement).
+		// Defaults to soft delete (tokens invalidated, WP user preserved).
+		// Pass `hard` => true to also call wp_delete_user() and remove the WP account entirely.
 		register_rest_route(
 			self::NAMESPACE,
 			'/user/delete-account',
@@ -426,6 +428,11 @@ class REST_API {
 					'confirm' => [
 						'required' => true,
 						'type'     => 'boolean',
+					],
+					'hard'    => [
+						'required' => false,
+						'type'     => 'boolean',
+						'default'  => false,
 					],
 				],
 			]
@@ -1329,6 +1336,7 @@ class REST_API {
 		$logger  = Logger::get_instance();
 		$user_id = get_current_user_id();
 		$confirm = $request->get_param( 'confirm' );
+		$hard    = (bool) $request->get_param( 'hard' );
 
 		if ( ! $confirm ) {
 			return new \WP_Error(
@@ -1339,19 +1347,50 @@ class REST_API {
 		}
 
 		/**
-		 * Fires before an account is soft-deleted from the app.
+		 * Fires before an account is deleted from the app.
 		 *
 		 * Use this to clean up app-specific data: remove taxonomy terms,
-		 * clear app meta, revoke app-specific access, etc.
+		 * clear app meta, revoke app-specific access, delete third-party
+		 * records (e.g. RevenueCat subscriber), etc. Runs for both soft
+		 * and hard deletes so you can count on $user_id being queryable.
 		 *
 		 * @since 0.2.0
 		 *
-		 * @param int $user_id The user ID being deleted from the app.
+		 * @param int $user_id The user ID being deleted.
 		 */
 		do_action( 'maiexpowp_before_delete_account', $user_id );
 
 		// Invalidate all API tokens (user can no longer auth from app).
 		Auth::invalidate_all_tokens( $user_id );
+
+		if ( $hard ) {
+			require_once ABSPATH . 'wp-admin/includes/user.php';
+			wp_delete_user( $user_id, null );
+
+			/**
+			 * Fires after a user has been hard-deleted via wp_delete_user().
+			 *
+			 * At this point the $user_id no longer corresponds to a row in
+			 * wp_users — use this only for cleanup that does not require
+			 * querying user-owned data (those cleanups belong in
+			 * `maiexpowp_before_delete_account`).
+			 *
+			 * @since 2.1.0
+			 *
+			 * @param int $user_id The ID of the user that was deleted.
+			 */
+			do_action( 'maiexpowp_after_delete_account', $user_id );
+
+			$logger->info( sprintf( 'Account hard-deleted for user ID %d: WP user removed and all API tokens invalidated', $user_id ) );
+
+			return new \WP_REST_Response(
+				[
+					'success' => true,
+					'message' => __( 'Your account has been deleted.', 'maiexpowp' ),
+				],
+				200
+			);
+		}
 
 		$logger->info( sprintf( 'Account soft-deleted for user ID %d: all API tokens invalidated', $user_id ) );
 
